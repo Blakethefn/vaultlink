@@ -1,0 +1,7 @@
+[package]
+name = "vaultlink"
+version = "0.1.0"
+edition = "2021"
+description = "Obsidian vault integrity checker CLI"
+
+[dependencies]
