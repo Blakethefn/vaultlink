@@ -101,6 +101,11 @@ pub fn print_summary(issues: &[Issue], note_count: usize) {
         "Duplicate stems:".cyan().bold(),
         count_by_category(issues, Category::Duplicate),
     );
+    println!(
+        "  {} {}",
+        "Unlinked projects:".cyan().bold(),
+        count_by_category(issues, Category::UnlinkedProject),
+    );
     println!();
 
     if errors == 0 && warnings == 0 {

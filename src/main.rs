@@ -58,6 +58,13 @@ enum Commands {
 
     /// Check frontmatter consistency
     Frontmatter,
+
+    /// Find or fix notes that reference a project but aren't linked to it
+    Autolink {
+        /// Actually apply fixes (add project field to frontmatter)
+        #[arg(long)]
+        fix: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -99,6 +106,27 @@ fn main() -> Result<()> {
         Some(Commands::Frontmatter) => {
             let issues = checks::check_frontmatter(&notes);
             formatter::print_issues(&issues, true);
+        }
+        Some(Commands::Autolink { fix }) => {
+            if fix {
+                let fixes = checks::find_autolink_fixes(&notes, &config);
+                if fixes.is_empty() {
+                    println!("No unlinked project references found.");
+                } else {
+                    println!("Found {} notes to link:\n", fixes.len());
+                    for f in &fixes {
+                        println!("  {} -> project: {}", f.rel_path, f.project_slug);
+                    }
+                    println!();
+                    match checks::apply_autolink_fixes(&fixes) {
+                        Ok(count) => println!("Applied {} fixes.", count),
+                        Err(e) => eprintln!("Error applying fixes: {}", e),
+                    }
+                }
+            } else {
+                let issues = checks::check_unlinked_projects(&notes, &config);
+                formatter::print_issues(&issues, true);
+            }
         }
         None => {
             // Default: run all checks

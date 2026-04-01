@@ -27,6 +27,7 @@ pub enum Category {
     MissingHub,
     MissingFrontmatter,
     Duplicate,
+    UnlinkedProject,
 }
 
 impl std::fmt::Display for Category {
@@ -38,6 +39,7 @@ impl std::fmt::Display for Category {
             Category::MissingHub => write!(f, "missing-hub"),
             Category::MissingFrontmatter => write!(f, "frontmatter"),
             Category::Duplicate => write!(f, "duplicate"),
+            Category::UnlinkedProject => write!(f, "unlinked-project"),
         }
     }
 }
@@ -290,6 +292,212 @@ pub fn check_duplicates(notes: &[VaultNote]) -> Vec<Issue> {
     issues
 }
 
+/// Collect project slugs from the projects directory in the vault.
+/// Returns a list of (slug, hub_stem) pairs derived from filenames — no hardcoded paths.
+fn collect_project_slugs(config: &Config) -> Vec<(String, String)> {
+    let projects_path = config.vault_path().join(config.projects_dir());
+    let mut slugs = Vec::new();
+
+    let entries = match std::fs::read_dir(&projects_path) {
+        Ok(e) => e,
+        Err(_) => return slugs,
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.ends_with(".md") {
+            let stem = name.strip_suffix(".md").unwrap_or(&name).to_string();
+            // Skip index files
+            if stem == "projects" {
+                continue;
+            }
+            slugs.push((stem.clone(), stem));
+        } else if entry.path().is_dir() {
+            // Directory-based project hub (project/project.md)
+            let stem = name.clone();
+            if stem == "projects" {
+                continue;
+            }
+            slugs.push((stem.clone(), stem));
+        }
+    }
+
+    slugs
+}
+
+/// Check for notes that reference a project by slug in their filename or body
+/// but are not linked to the project hub via wikilink or frontmatter project field.
+pub fn check_unlinked_projects(notes: &[VaultNote], config: &Config) -> Vec<Issue> {
+    let project_slugs = collect_project_slugs(config);
+    let projects_dir = config.projects_dir();
+    let mut issues = Vec::new();
+
+    for note in notes {
+        // Skip project hub notes themselves
+        if note.rel_path.starts_with(&projects_dir) {
+            continue;
+        }
+
+        // Check which projects this note already references
+        let existing_project = note
+            .frontmatter
+            .project
+            .as_deref()
+            .unwrap_or("")
+            .to_lowercase();
+
+        let existing_links: HashSet<String> = note
+            .wikilinks
+            .iter()
+            .map(|l| {
+                l.rsplit('/')
+                    .next()
+                    .unwrap_or(l)
+                    .to_lowercase()
+            })
+            .collect();
+
+        for (slug, hub_stem) in &project_slugs {
+            // Already linked via frontmatter project field
+            if existing_project == slug.to_lowercase() {
+                continue;
+            }
+            // Already has a wikilink to the project hub
+            if existing_links.contains(&hub_stem.to_lowercase()) {
+                continue;
+            }
+
+            // Check if the project slug appears in the note's filename
+            let stem_lower = note.stem.to_lowercase();
+            let slug_lower = slug.to_lowercase();
+            let filename_match = stem_lower.contains(&slug_lower);
+
+            // Check if the project slug appears in the note body (as a word boundary match)
+            let body_lower = note.body.to_lowercase();
+            let body_match = body_lower.contains(&slug_lower);
+
+            if filename_match || body_match {
+                let location = if filename_match { "filename" } else { "body" };
+                issues.push(Issue {
+                    severity: Severity::Info,
+                    category: Category::UnlinkedProject,
+                    note: note.rel_path.clone(),
+                    message: format!(
+                        "references project '{}' in {} but has no link to [[{}]]",
+                        slug, location, hub_stem
+                    ),
+                });
+            }
+        }
+    }
+
+    issues
+}
+
+/// Represents a fix to apply: adding a project field to a note's frontmatter.
+#[derive(Debug)]
+pub struct AutolinkFix {
+    pub note_path: std::path::PathBuf,
+    pub rel_path: String,
+    pub project_slug: String,
+}
+
+/// Find notes that should be linked to a project and return the fixes to apply.
+/// Only considers notes in tasks/ and outputs/ directories — meta, context, and
+/// other directories are excluded since project association may not be meaningful.
+pub fn find_autolink_fixes(notes: &[VaultNote], config: &Config) -> Vec<AutolinkFix> {
+    let project_slugs = collect_project_slugs(config);
+    let tasks_dir = config.tasks_dir();
+    let outputs_dir = config.outputs_dir();
+    let mut fixes = Vec::new();
+
+    for note in notes {
+        // Only auto-fix notes in tasks/ and outputs/ where project field is meaningful
+        if !note.rel_path.starts_with(&tasks_dir) && !note.rel_path.starts_with(&outputs_dir) {
+            continue;
+        }
+
+        let existing_project = note.frontmatter.project.as_deref().unwrap_or("");
+        // Skip notes that already have a project set
+        if !existing_project.is_empty() {
+            continue;
+        }
+
+        let existing_links: HashSet<String> = note
+            .wikilinks
+            .iter()
+            .map(|l| l.rsplit('/').next().unwrap_or(l).to_lowercase())
+            .collect();
+
+        // Find the best matching project (prefer filename match over body match)
+        let mut best_match: Option<&str> = None;
+
+        for (slug, hub_stem) in &project_slugs {
+            if existing_links.contains(&hub_stem.to_lowercase()) {
+                continue;
+            }
+
+            let stem_lower = note.stem.to_lowercase();
+            let slug_lower = slug.to_lowercase();
+
+            if stem_lower.contains(&slug_lower) {
+                best_match = Some(slug);
+                break; // Filename match is definitive
+            }
+
+            if best_match.is_none() && note.body.to_lowercase().contains(&slug_lower) {
+                best_match = Some(slug);
+            }
+        }
+
+        if let Some(project_slug) = best_match {
+            fixes.push(AutolinkFix {
+                note_path: note.path.clone(),
+                rel_path: note.rel_path.clone(),
+                project_slug: project_slug.to_string(),
+            });
+        }
+    }
+
+    fixes
+}
+
+/// Apply autolink fixes by setting the `project:` frontmatter field.
+/// Only modifies notes that have existing frontmatter and no project field.
+pub fn apply_autolink_fixes(fixes: &[AutolinkFix]) -> Result<usize, anyhow::Error> {
+    let mut applied = 0;
+
+    for fix in fixes {
+        let content = std::fs::read_to_string(&fix.note_path)?;
+        let trimmed = content.trim_start();
+
+        if !trimmed.starts_with("---") {
+            // No frontmatter block — skip, don't inject one
+            continue;
+        }
+
+        let after_open = &trimmed[3..];
+        if let Some(close_pos) = after_open.find("\n---") {
+            let yaml_block = &after_open[..close_pos];
+
+            // Don't overwrite an existing project field
+            if yaml_block.lines().any(|l| l.trim_start().starts_with("project:")) {
+                continue;
+            }
+
+            // Insert `project: <slug>` before the closing ---
+            let new_yaml = format!("{}\nproject: {}", yaml_block, fix.project_slug);
+            let rest = &after_open[close_pos..];
+            let new_content = format!("---{}{}", new_yaml, rest);
+
+            std::fs::write(&fix.note_path, new_content)?;
+            applied += 1;
+        }
+    }
+
+    Ok(applied)
+}
+
 pub fn run_all_checks(notes: &[VaultNote], config: &Config) -> Vec<Issue> {
     let mut issues = Vec::new();
 
@@ -299,6 +507,7 @@ pub fn run_all_checks(notes: &[VaultNote], config: &Config) -> Vec<Issue> {
     issues.extend(check_missing_hubs(config));
     issues.extend(check_frontmatter(notes));
     issues.extend(check_duplicates(notes));
+    issues.extend(check_unlinked_projects(notes, config));
 
     // Sort: errors first, then warnings, then info
     issues.sort_by(|a, b| {
