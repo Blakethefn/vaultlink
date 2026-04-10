@@ -1,8 +1,7 @@
 use crate::config::Config;
-use crate::scanner::{build_backlink_index, build_stem_index, VaultNote};
+use crate::scanner::{VaultNote, build_backlink_index, build_stem_index};
 use chrono::{Local, NaiveDate};
 use std::collections::HashSet;
-use std::path::Path;
 
 #[derive(Debug)]
 pub struct Issue {
@@ -53,8 +52,7 @@ pub fn check_broken_links(notes: &[VaultNote]) -> Vec<Issue> {
             let link_stem = link.rsplit('/').next().unwrap_or(link);
 
             // Check if the link resolves to any note
-            let found = stem_index.contains_key(link)
-                || stem_index.contains_key(link_stem);
+            let found = stem_index.contains_key(link) || stem_index.contains_key(link_stem);
 
             if !found {
                 issues.push(Issue {
@@ -76,9 +74,22 @@ pub fn check_orphans(notes: &[VaultNote]) -> Vec<Issue> {
 
     // Index notes (like dashboard, tasks.md, projects.md) are expected to have no inbound links
     let index_names: HashSet<&str> = [
-        "dashboard", "tasks", "outputs", "projects", "logs", "math",
-        "systems", "dev", "business", "agents", "assets", "context",
-        "memory", "templates", "meta", "README",
+        "dashboard",
+        "tasks",
+        "outputs",
+        "projects",
+        "logs",
+        "math",
+        "systems",
+        "dev",
+        "business",
+        "agents",
+        "assets",
+        "context",
+        "memory",
+        "templates",
+        "meta",
+        "README",
     ]
     .iter()
     .copied()
@@ -127,20 +138,20 @@ pub fn check_stale(notes: &[VaultNote], stale_days: i64) -> Vec<Issue> {
             .as_deref()
             .or(note.frontmatter.created.as_deref());
 
-        if let Some(date_str) = date_str {
-            if let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-                let days_old = (today - date).num_days();
-                if days_old > stale_days {
-                    issues.push(Issue {
-                        severity: Severity::Warning,
-                        category: Category::Stale,
-                        note: note.rel_path.clone(),
-                        message: format!(
-                            "status is '{}' but last updated {} days ago",
-                            status, days_old
-                        ),
-                    });
-                }
+        if let Some(date_str) = date_str
+            && let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+        {
+            let days_old = (today - date).num_days();
+            if days_old > stale_days {
+                issues.push(Issue {
+                    severity: Severity::Warning,
+                    category: Category::Stale,
+                    note: note.rel_path.clone(),
+                    message: format!(
+                        "status is '{}' but last updated {} days ago",
+                        status, days_old
+                    ),
+                });
             }
         }
     }
@@ -152,9 +163,11 @@ pub fn check_missing_hubs(config: &Config) -> Vec<Issue> {
     let projects_path = std::fs::read_dir(config.vault_path().join(config.projects_dir()));
     let mut issues = Vec::new();
 
-    // Get all project directories under /Projects (the code directory, not obsidian)
-    let vault_path = config.vault_path();
-    let code_projects_dir = vault_path.parent().unwrap_or(Path::new("/"));
+    // If code_projects_path is not configured, skip this check.
+    // The expected code-projects root is environment-specific.
+    let Some(code_projects_dir) = config.code_projects_path() else {
+        return issues;
+    };
 
     let mut hub_names: HashSet<String> = HashSet::new();
     if let Ok(entries) = projects_path {
@@ -170,7 +183,7 @@ pub fn check_missing_hubs(config: &Config) -> Vec<Issue> {
     }
 
     // Check each directory in the code projects dir
-    if let Ok(entries) = std::fs::read_dir(code_projects_dir) {
+    if let Ok(entries) = std::fs::read_dir(&code_projects_dir) {
         for entry in entries.flatten() {
             if !entry.path().is_dir() {
                 continue;
@@ -178,7 +191,11 @@ pub fn check_missing_hubs(config: &Config) -> Vec<Issue> {
             let name = entry.file_name().to_string_lossy().to_string();
 
             // Skip obsidian_docs itself and hidden dirs
-            if name == "obsidian_docs" || name.starts_with('.') || name == "documents" || name == "math" {
+            if name == "obsidian_docs"
+                || name.starts_with('.')
+                || name == "documents"
+                || name == "math"
+            {
                 continue;
             }
 
@@ -198,6 +215,67 @@ pub fn check_missing_hubs(config: &Config) -> Vec<Issue> {
     }
 
     issues
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_missing_hubs;
+    use crate::config::Config;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn base_config(vault_path: &str, code_projects_path: Option<String>) -> Config {
+        Config {
+            vault_path: vault_path.to_string(),
+            tasks_dir: Some("tasks".to_string()),
+            outputs_dir: Some("outputs".to_string()),
+            projects_dir: Some("01-projects".to_string()),
+            code_projects_path,
+            ignore_dirs: Some(vec![]),
+            stale_days: Some(7),
+        }
+    }
+
+    #[test]
+    fn missing_hubs_returns_no_issues_without_code_projects_path() {
+        let tmp = tempdir().expect("temp dir");
+        let vault_path = tmp.path().join("vault");
+        fs::create_dir_all(vault_path.join("01-projects")).expect("create vault projects dir");
+        fs::write(vault_path.join("01-projects").join("alpha.md"), "# alpha")
+            .expect("write project hub");
+
+        let config = base_config(vault_path.to_str().expect("vault path str"), None);
+        let issues = check_missing_hubs(&config);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn missing_hubs_reports_code_project_without_hub() {
+        let tmp = tempdir().expect("temp dir");
+        let vault_path = tmp.path().join("vault");
+        let code_projects_path = tmp.path().join("code-projects");
+
+        fs::create_dir_all(vault_path.join("01-projects")).expect("create vault projects dir");
+        fs::write(vault_path.join("01-projects").join("alpha.md"), "# alpha")
+            .expect("write project hub");
+        fs::create_dir_all(code_projects_path.join("alpha")).expect("create alpha project");
+        fs::create_dir_all(code_projects_path.join("beta")).expect("create beta project");
+
+        let config = base_config(
+            vault_path.to_str().expect("vault path str"),
+            Some(
+                code_projects_path
+                    .to_str()
+                    .expect("code projects path str")
+                    .to_string(),
+            ),
+        );
+        let issues = check_missing_hubs(&config);
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].note, "beta");
+        assert!(issues[0].message.contains("no project hub"));
+    }
 }
 
 pub fn check_frontmatter(notes: &[VaultNote]) -> Vec<Issue> {
@@ -236,27 +314,26 @@ pub fn check_frontmatter(notes: &[VaultNote]) -> Vec<Issue> {
         }
 
         // Notes in outputs/ should have type: output
-        if note.rel_path.starts_with("outputs/") && note.stem != "outputs" {
-            if note_type.is_empty() {
-                issues.push(Issue {
-                    severity: Severity::Warning,
-                    category: Category::MissingFrontmatter,
-                    note: note.rel_path.clone(),
-                    message: "output note missing 'type' in frontmatter".to_string(),
-                });
-            }
+        if note.rel_path.starts_with("outputs/") && note.stem != "outputs" && note_type.is_empty() {
+            issues.push(Issue {
+                severity: Severity::Warning,
+                category: Category::MissingFrontmatter,
+                note: note.rel_path.clone(),
+                message: "output note missing 'type' in frontmatter".to_string(),
+            });
         }
 
         // Project hubs should have type: project
-        if note.rel_path.starts_with("01-projects/") && note.stem != "projects" {
-            if note_type.is_empty() {
-                issues.push(Issue {
-                    severity: Severity::Warning,
-                    category: Category::MissingFrontmatter,
-                    note: note.rel_path.clone(),
-                    message: "project hub missing 'type' in frontmatter".to_string(),
-                });
-            }
+        if note.rel_path.starts_with("01-projects/")
+            && note.stem != "projects"
+            && note_type.is_empty()
+        {
+            issues.push(Issue {
+                severity: Severity::Warning,
+                category: Category::MissingFrontmatter,
+                note: note.rel_path.clone(),
+                message: "project hub missing 'type' in frontmatter".to_string(),
+            });
         }
     }
 
@@ -349,12 +426,7 @@ pub fn check_unlinked_projects(notes: &[VaultNote], config: &Config) -> Vec<Issu
         let existing_links: HashSet<String> = note
             .wikilinks
             .iter()
-            .map(|l| {
-                l.rsplit('/')
-                    .next()
-                    .unwrap_or(l)
-                    .to_lowercase()
-            })
+            .map(|l| l.rsplit('/').next().unwrap_or(l).to_lowercase())
             .collect();
 
         for (slug, hub_stem) in &project_slugs {
@@ -481,7 +553,10 @@ pub fn apply_autolink_fixes(fixes: &[AutolinkFix]) -> Result<usize, anyhow::Erro
             let yaml_block = &after_open[..close_pos];
 
             // Don't overwrite an existing project field
-            if yaml_block.lines().any(|l| l.trim_start().starts_with("project:")) {
+            if yaml_block
+                .lines()
+                .any(|l| l.trim_start().starts_with("project:"))
+            {
                 continue;
             }
 

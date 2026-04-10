@@ -9,6 +9,7 @@ pub struct Config {
     pub tasks_dir: Option<String>,
     pub outputs_dir: Option<String>,
     pub projects_dir: Option<String>,
+    pub code_projects_path: Option<String>,
     pub ignore_dirs: Option<Vec<String>>,
     pub stale_days: Option<i64>,
 }
@@ -51,6 +52,7 @@ impl Config {
             tasks_dir: Some("tasks".to_string()),
             outputs_dir: Some("outputs".to_string()),
             projects_dir: Some("01-projects".to_string()),
+            code_projects_path: None,
             ignore_dirs: Some(vec![
                 ".obsidian".to_string(),
                 "templates".to_string(),
@@ -69,15 +71,21 @@ impl Config {
     }
 
     pub fn tasks_dir(&self) -> String {
-        self.tasks_dir.clone().unwrap_or_else(|| "tasks".to_string())
+        self.tasks_dir
+            .clone()
+            .unwrap_or_else(|| "tasks".to_string())
     }
 
     pub fn outputs_dir(&self) -> String {
-        self.outputs_dir.clone().unwrap_or_else(|| "outputs".to_string())
+        self.outputs_dir
+            .clone()
+            .unwrap_or_else(|| "outputs".to_string())
     }
 
     pub fn projects_dir(&self) -> String {
-        self.projects_dir.clone().unwrap_or_else(|| "01-projects".to_string())
+        self.projects_dir
+            .clone()
+            .unwrap_or_else(|| "01-projects".to_string())
     }
 
     pub fn ignore_dirs(&self) -> Vec<String> {
@@ -92,5 +100,12 @@ impl Config {
 
     pub fn stale_days(&self) -> i64 {
         self.stale_days.unwrap_or(7)
+    }
+
+    pub fn code_projects_path(&self) -> Option<PathBuf> {
+        self.code_projects_path
+            .as_ref()
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
     }
 }

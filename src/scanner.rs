@@ -14,7 +14,6 @@ pub struct Frontmatter {
     pub created: Option<String>,
     pub updated: Option<String>,
     pub project: Option<String>,
-    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -31,17 +30,14 @@ pub fn scan_vault(vault_path: &Path, ignore_dirs: &[String]) -> Result<Vec<Vault
     let wikilink_re = Regex::new(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]").unwrap();
     let mut notes = Vec::new();
 
-    for entry in WalkDir::new(vault_path)
-        .into_iter()
-        .filter_entry(|e| {
-            if e.file_type().is_dir() {
-                let name = e.file_name().to_string_lossy();
-                !ignore_dirs.iter().any(|d| d == name.as_ref())
-            } else {
-                true
-            }
-        })
-    {
+    for entry in WalkDir::new(vault_path).into_iter().filter_entry(|e| {
+        if e.file_type().is_dir() {
+            let name = e.file_name().to_string_lossy();
+            !ignore_dirs.iter().any(|d| d == name.as_ref())
+        } else {
+            true
+        }
+    }) {
         let entry = entry?;
         if !entry.file_type().is_file() {
             continue;
@@ -96,7 +92,9 @@ fn parse_frontmatter(content: &str) -> (Frontmatter, String) {
     if let Some(close_pos) = after_open.find("\n---") {
         let yaml_str = &after_open[..close_pos];
         let body_start = close_pos + 4;
-        let body = after_open[body_start..].trim_start_matches('\n').to_string();
+        let body = after_open[body_start..]
+            .trim_start_matches('\n')
+            .to_string();
 
         match serde_yaml::from_str::<Frontmatter>(yaml_str) {
             Ok(fm) => (fm, body),

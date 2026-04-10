@@ -3,6 +3,12 @@ name = "vaultlink"
 version = "0.1.0"
 edition = "2024"
 description = "Obsidian vault integrity checker CLI"
+license = "MIT"
+repository = "https://github.com/Blakethefn/vaultlink"
+homepage = "https://github.com/Blakethefn/vaultlink"
+readme = "README.md"
+keywords = ["obsidian", "markdown", "cli", "lint", "knowledge-management"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 # CLI
@@ -23,3 +29,6 @@ colored = "3"
 glob = "0.3"
 walkdir = "2"
 regex = "1"
+
+[dev-dependencies]
+tempfile = "3"

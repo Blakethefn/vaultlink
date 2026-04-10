@@ -7,9 +7,18 @@ pub fn print_issues(issues: &[Issue], verbose: bool) {
         return;
     }
 
-    let errors = issues.iter().filter(|i| i.severity == Severity::Error).count();
-    let warnings = issues.iter().filter(|i| i.severity == Severity::Warning).count();
-    let infos = issues.iter().filter(|i| i.severity == Severity::Info).count();
+    let errors = issues
+        .iter()
+        .filter(|i| i.severity == Severity::Error)
+        .count();
+    let warnings = issues
+        .iter()
+        .filter(|i| i.severity == Severity::Warning)
+        .count();
+    let infos = issues
+        .iter()
+        .filter(|i| i.severity == Severity::Info)
+        .count();
 
     println!("{}", "Vault Check Results".bold().underline());
     println!();
@@ -64,9 +73,18 @@ pub fn print_issues(issues: &[Issue], verbose: bool) {
 }
 
 pub fn print_summary(issues: &[Issue], note_count: usize) {
-    let errors = issues.iter().filter(|i| i.severity == Severity::Error).count();
-    let warnings = issues.iter().filter(|i| i.severity == Severity::Warning).count();
-    let infos = issues.iter().filter(|i| i.severity == Severity::Info).count();
+    let errors = issues
+        .iter()
+        .filter(|i| i.severity == Severity::Error)
+        .count();
+    let warnings = issues
+        .iter()
+        .filter(|i| i.severity == Severity::Warning)
+        .count();
+    let infos = issues
+        .iter()
+        .filter(|i| i.severity == Severity::Info)
+        .count();
 
     println!("{}", "Vault Health".bold().underline());
     println!();
@@ -111,10 +129,7 @@ pub fn print_summary(issues: &[Issue], note_count: usize) {
     if errors == 0 && warnings == 0 {
         println!("  {}", "Vault is healthy.".green().bold());
     } else if errors == 0 {
-        println!(
-            "  {}",
-            format!("{} warnings to review.", warnings).yellow()
-        );
+        println!("  {}", format!("{} warnings to review.", warnings).yellow());
     } else {
         println!(
             "  {}",
