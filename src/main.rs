@@ -61,7 +61,7 @@ enum Commands {
 
     /// Find or fix notes that reference a project but aren't linked to it
     Autolink {
-        /// Actually apply fixes (add project field to frontmatter)
+        /// Actually apply fixes (set/add project field)
         #[arg(long)]
         fix: bool,
     },

@@ -79,12 +79,12 @@ vaultlink autolink --fix
 - `hubs` - code project directories missing a project hub note
 - `frontmatter` - missing `type`/`status` fields in key note folders
 - `autolink` - detect project references not linked to project hubs
-- `autolink --fix` - add `project:` frontmatter field to eligible task/output notes
+- `autolink --fix` - add/set `project:` field for unlinked notes
 
 ## Notes
 
 - `hubs` check is skipped unless `code_projects_path` is configured.
-- `autolink --fix` only edits notes in `tasks/` and `outputs/`.
+- `autolink --fix` now scans all non-project-hub notes and can add minimal frontmatter when missing.
 - Info-level checks are hidden by default; use `-v` or `--verbose`.
 
 ## Development

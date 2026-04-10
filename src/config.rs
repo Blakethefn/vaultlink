@@ -70,18 +70,6 @@ impl Config {
         PathBuf::from(&self.vault_path)
     }
 
-    pub fn tasks_dir(&self) -> String {
-        self.tasks_dir
-            .clone()
-            .unwrap_or_else(|| "tasks".to_string())
-    }
-
-    pub fn outputs_dir(&self) -> String {
-        self.outputs_dir
-            .clone()
-            .unwrap_or_else(|| "outputs".to_string())
-    }
-
     pub fn projects_dir(&self) -> String {
         self.projects_dir
             .clone()
