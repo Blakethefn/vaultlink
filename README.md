@@ -67,6 +67,8 @@ vaultlink hubs
 vaultlink frontmatter
 vaultlink autolink
 vaultlink autolink --fix
+vaultlink autolink --fix-wikilinks
+vaultlink autolink --fix --fix-wikilinks --dry-run
 ```
 
 ## Commands
@@ -80,11 +82,14 @@ vaultlink autolink --fix
 - `frontmatter` - missing `type`/`status` fields in key note folders
 - `autolink` - detect project references not linked to project hubs
 - `autolink --fix` - add/set `project:` field for unlinked notes
+- `autolink --fix-wikilinks` - append `Project: [[...]]` links in note bodies
+- `autolink --dry-run` - preview `--fix` / `--fix-wikilinks` changes without writing files
 
 ## Notes
 
 - `hubs` check is skipped unless `code_projects_path` is configured.
 - `autolink --fix` now scans all non-project-hub notes and can add minimal frontmatter when missing.
+- `autolink --fix-wikilinks` appends a project link line and does not remove or rewrite existing text.
 - Info-level checks are hidden by default; use `-v` or `--verbose`.
 
 ## Development

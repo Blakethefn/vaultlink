@@ -220,7 +220,10 @@ pub fn check_missing_hubs(config: &Config) -> Vec<Issue> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AutolinkFix, apply_autolink_fixes, check_missing_hubs, find_autolink_fixes};
+    use super::{
+        AutolinkFix, AutolinkWikilinkFix, apply_autolink_fixes, apply_autolink_wikilink_fixes,
+        check_missing_hubs, find_autolink_fixes, find_autolink_wikilink_fixes,
+    };
     use crate::config::Config;
     use crate::scanner::{Frontmatter, VaultNote};
     use std::fs;
@@ -253,6 +256,29 @@ mod tests {
             },
             body: body.to_string(),
             wikilinks: vec![],
+        }
+    }
+
+    fn make_note_with_links(
+        path: &str,
+        stem: &str,
+        body: &str,
+        project: Option<&str>,
+        wikilinks: Vec<&str>,
+    ) -> VaultNote {
+        VaultNote {
+            path: PathBuf::from(path),
+            rel_path: path.to_string(),
+            stem: stem.to_string(),
+            frontmatter: Frontmatter {
+                note_type: None,
+                status: None,
+                created: None,
+                updated: None,
+                project: project.map(str::to_string),
+            },
+            body: body.to_string(),
+            wikilinks: wikilinks.into_iter().map(str::to_string).collect(),
         }
     }
 
@@ -362,6 +388,51 @@ mod tests {
 
         let updated = fs::read_to_string(&note_path).expect("read note");
         assert!(updated.starts_with("---\nproject: topstep\n---\n\n# Heading"));
+    }
+
+    #[test]
+    fn find_wikilink_fixes_when_frontmatter_exists_without_wikilink() {
+        let tmp = tempdir().expect("temp dir");
+        let vault_path = tmp.path().join("vault");
+        fs::create_dir_all(vault_path.join("01-projects")).expect("create projects dir");
+        fs::write(
+            vault_path.join("01-projects").join("topstep.md"),
+            "# topstep",
+        )
+        .expect("write hub");
+
+        let config = base_config(vault_path.to_str().expect("vault path str"), None);
+        let notes = vec![make_note_with_links(
+            "notes/topstep-log.md",
+            "topstep-log",
+            "topstep notes",
+            Some("topstep"),
+            vec![],
+        )];
+
+        let fixes = find_autolink_wikilink_fixes(&notes, &config);
+        assert_eq!(fixes.len(), 1);
+        assert_eq!(fixes[0].project_link_target, "01-projects/topstep");
+    }
+
+    #[test]
+    fn apply_wikilink_fixes_appends_project_link_line() {
+        let tmp = tempdir().expect("temp dir");
+        let note_path = tmp.path().join("note.md");
+        fs::write(&note_path, "# Heading\nBody line").expect("write note");
+
+        let fixes = vec![AutolinkWikilinkFix {
+            note_path: note_path.clone(),
+            rel_path: "note.md".to_string(),
+            project_slug: "topstep".to_string(),
+            project_link_target: "01-projects/topstep".to_string(),
+        }];
+
+        let applied = apply_autolink_wikilink_fixes(&fixes).expect("apply wikilink fixes");
+        assert_eq!(applied, 1);
+
+        let updated = fs::read_to_string(&note_path).expect("read note");
+        assert!(updated.contains("Project: [[01-projects/topstep]]"));
     }
 }
 
@@ -550,6 +621,17 @@ fn note_has_project_link(note: &VaultNote, slug: &str, hub_stem: &str) -> bool {
     })
 }
 
+fn note_has_project_wikilink(note: &VaultNote, slug: &str, hub_stem: &str) -> bool {
+    let aliases = project_aliases(slug, hub_stem);
+    note.wikilinks.iter().any(|link| {
+        let link_lower = link.to_lowercase();
+        let link_stem = link_lower.rsplit('/').next().unwrap_or(&link_lower);
+        aliases
+            .iter()
+            .any(|alias| link_lower == *alias || link_stem == alias || link_lower.ends_with(alias))
+    })
+}
+
 fn note_mentions_project(note: &VaultNote, slug: &str, hub_stem: &str) -> bool {
     let aliases = project_aliases(slug, hub_stem);
     let stem_lower = note.stem.to_lowercase();
@@ -603,6 +685,14 @@ pub struct AutolinkFix {
     pub project_slug: String,
 }
 
+#[derive(Debug)]
+pub struct AutolinkWikilinkFix {
+    pub note_path: std::path::PathBuf,
+    pub rel_path: String,
+    pub project_slug: String,
+    pub project_link_target: String,
+}
+
 /// Find notes that should be linked to a project and return the fixes to apply.
 /// Considers all non-project-hub notes in the vault.
 pub fn find_autolink_fixes(notes: &[VaultNote], config: &Config) -> Vec<AutolinkFix> {
@@ -648,6 +738,53 @@ pub fn find_autolink_fixes(notes: &[VaultNote], config: &Config) -> Vec<Autolink
     fixes
 }
 
+/// Find notes that should receive a project wikilink in body text.
+/// Applies to all non-project-hub notes and only when there is no existing project wikilink.
+pub fn find_autolink_wikilink_fixes(
+    notes: &[VaultNote],
+    config: &Config,
+) -> Vec<AutolinkWikilinkFix> {
+    let project_slugs = collect_project_slugs(config);
+    let projects_dir = config.projects_dir();
+    let mut fixes = Vec::new();
+
+    for note in notes {
+        if note.rel_path.starts_with(&projects_dir) {
+            continue;
+        }
+
+        let mut best_match: Option<(&str, &str)> = None;
+
+        for (slug, hub_stem) in &project_slugs {
+            if note_has_project_wikilink(note, slug, hub_stem) {
+                continue;
+            }
+
+            if alias_matches_text(&note.stem.to_lowercase(), slug)
+                || alias_matches_text(&note.stem.to_lowercase(), hub_stem)
+            {
+                best_match = Some((slug, hub_stem));
+                break;
+            }
+
+            if best_match.is_none() && note_mentions_project(note, slug, hub_stem) {
+                best_match = Some((slug, hub_stem));
+            }
+        }
+
+        if let Some((project_slug, hub_stem)) = best_match {
+            fixes.push(AutolinkWikilinkFix {
+                note_path: note.path.clone(),
+                rel_path: note.rel_path.clone(),
+                project_slug: project_slug.to_string(),
+                project_link_target: format!("{}/{}", projects_dir, hub_stem),
+            });
+        }
+    }
+
+    fixes
+}
+
 /// Apply autolink fixes by setting the `project:` frontmatter field.
 /// If a note has no frontmatter, a minimal frontmatter block is added.
 pub fn apply_autolink_fixes(fixes: &[AutolinkFix]) -> Result<usize, anyhow::Error> {
@@ -685,6 +822,34 @@ pub fn apply_autolink_fixes(fixes: &[AutolinkFix]) -> Result<usize, anyhow::Erro
             std::fs::write(&fix.note_path, new_content)?;
             applied += 1;
         }
+    }
+
+    Ok(applied)
+}
+
+/// Apply wikilink fixes by appending a project link line to note body.
+pub fn apply_autolink_wikilink_fixes(
+    fixes: &[AutolinkWikilinkFix],
+) -> Result<usize, anyhow::Error> {
+    let mut applied = 0;
+
+    for fix in fixes {
+        let content = std::fs::read_to_string(&fix.note_path)?;
+        let project_line = format!("Project: [[{}]]", fix.project_link_target);
+
+        if content.contains(&project_line) {
+            continue;
+        }
+
+        let mut new_content = content.trim_end().to_string();
+        if !new_content.is_empty() {
+            new_content.push_str("\n\n");
+        }
+        new_content.push_str(&project_line);
+        new_content.push('\n');
+
+        std::fs::write(&fix.note_path, new_content)?;
+        applied += 1;
     }
 
     Ok(applied)

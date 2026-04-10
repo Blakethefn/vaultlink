@@ -61,9 +61,17 @@ enum Commands {
 
     /// Find or fix notes that reference a project but aren't linked to it
     Autolink {
-        /// Actually apply fixes (set/add project field)
+        /// Actually apply project frontmatter fixes (set/add project field)
         #[arg(long)]
         fix: bool,
+
+        /// Actually apply wikilink fixes (append project wikilink in note body)
+        #[arg(long)]
+        fix_wikilinks: bool,
+
+        /// Preview fixes without writing files
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -107,25 +115,60 @@ fn main() -> Result<()> {
             let issues = checks::check_frontmatter(&notes);
             formatter::print_issues(&issues, true);
         }
-        Some(Commands::Autolink { fix }) => {
+        Some(Commands::Autolink {
+            fix,
+            fix_wikilinks,
+            dry_run,
+        }) => {
+            if !fix && !fix_wikilinks {
+                let issues = checks::check_unlinked_projects(&notes, &config);
+                formatter::print_issues(&issues, true);
+                return Ok(());
+            }
+
             if fix {
                 let fixes = checks::find_autolink_fixes(&notes, &config);
                 if fixes.is_empty() {
-                    println!("No unlinked project references found.");
+                    println!("No frontmatter fixes found.");
                 } else {
-                    println!("Found {} notes to link:\n", fixes.len());
+                    println!("Found {} frontmatter fixes:\n", fixes.len());
                     for f in &fixes {
                         println!("  {} -> project: {}", f.rel_path, f.project_slug);
                     }
                     println!();
-                    match checks::apply_autolink_fixes(&fixes) {
-                        Ok(count) => println!("Applied {} fixes.", count),
-                        Err(e) => eprintln!("Error applying fixes: {}", e),
+                    if dry_run {
+                        println!("Dry run: would apply {} frontmatter fixes.", fixes.len());
+                    } else {
+                        match checks::apply_autolink_fixes(&fixes) {
+                            Ok(count) => println!("Applied {} frontmatter fixes.", count),
+                            Err(e) => eprintln!("Error applying frontmatter fixes: {}", e),
+                        }
                     }
                 }
-            } else {
-                let issues = checks::check_unlinked_projects(&notes, &config);
-                formatter::print_issues(&issues, true);
+            }
+
+            if fix_wikilinks {
+                let fixes = checks::find_autolink_wikilink_fixes(&notes, &config);
+                if fixes.is_empty() {
+                    println!("No wikilink fixes found.");
+                } else {
+                    println!("Found {} wikilink fixes:\n", fixes.len());
+                    for f in &fixes {
+                        println!(
+                            "  {} -> [[{}]] (project: {})",
+                            f.rel_path, f.project_link_target, f.project_slug
+                        );
+                    }
+                    println!();
+                    if dry_run {
+                        println!("Dry run: would apply {} wikilink fixes.", fixes.len());
+                    } else {
+                        match checks::apply_autolink_wikilink_fixes(&fixes) {
+                            Ok(count) => println!("Applied {} wikilink fixes.", count),
+                            Err(e) => eprintln!("Error applying wikilink fixes: {}", e),
+                        }
+                    }
+                }
             }
         }
         None => {
